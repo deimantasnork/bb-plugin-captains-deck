@@ -11,8 +11,9 @@ mate's thread.
 - **Charted Next, Underway, Captain's Call, Awaiting Merge, Landed** — one card
   per unit of work, with the worker bot, live thread state (working, queued,
   needs input, failed), the provider, the pull request link, and age.
-- **Answer in place.** The first mate attaches the options to a call and marks
-  the one it recommends. Your answer is recorded on the task and sent to the
+- **Answer in place.** Every call lists its options with a one-line detail and
+  marks the one the first mate recommends; you pick one, answer in your own
+  words, or add a note. The answer is recorded on the task and sent to the
   first mate's thread as an agent-only note, so the lane resumes.
 - **Earlier calls stay on the task.** The decision dialog lists the calls the
   first mate replaced, with the answer each got.

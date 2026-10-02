@@ -24,6 +24,7 @@ export type TaskState = z.infer<typeof taskStateSchema>;
 const decisionOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
+  detail: z.string().nullable(),
 });
 export type DecisionOption = z.infer<typeof decisionOptionSchema>;
 
@@ -67,7 +68,7 @@ export const rpcContract = defineRpcContract({
   deck_answer: {
     input: z.object({
       taskId: z.string(),
-      optionId: z.string(),
+      optionId: z.string().nullish(),
       note: z.string().trim().max(2000).nullish(),
     }),
     output: z.object({ task: taskSchema }),
@@ -170,10 +171,12 @@ export default async function plugin(bb: BbPluginApi) {
       threadId?: string | null;
     },
   ): Promise<DeckTask> {
-    const options: DecisionOption[] = input.options.map((label, index) => ({
-      id: `o${index + 1}`,
-      label,
-    }));
+    const options: DecisionOption[] = input.options.map((value, index) => {
+      const separator = value.indexOf(" :: ");
+      const label = separator === -1 ? value : value.slice(0, separator);
+      const detail = separator === -1 ? null : value.slice(separator + 4).trim() || null;
+      return { id: `o${index + 1}`, label: label.trim(), detail };
+    });
     let recommendedId: string | null = null;
     const recommend = input.recommend?.trim() ?? "";
     if (recommend !== "") {
@@ -213,15 +216,32 @@ export default async function plugin(bb: BbPluginApi) {
 
   async function answerDecision(
     taskId: string,
-    optionId: string,
+    optionId: string | null | undefined,
     note: string | null | undefined,
   ): Promise<DeckTask> {
     const cleanedNote = note?.trim() ? note.trim() : null;
+    const isFreeform = optionId === null || optionId === undefined || optionId === "";
+    if (isFreeform && cleanedNote === null) {
+      throw new Error("Answer with an option or in your own words");
+    }
     const answered = await updateTask(taskId, (task) => {
       const decision = task.decision;
       if (decision === null) throw new Error(`Task ${task.id} has no open decision`);
       if (decision.answeredAt !== null) {
         throw new Error(`Task ${task.id} was already answered`);
+      }
+      if (isFreeform) {
+        return {
+          ...task,
+          state: "underway",
+          decision: {
+            ...decision,
+            answeredAt: now(),
+            answerId: "freeform",
+            answerLabel: cleanedNote!.slice(0, 200),
+            answerNote: cleanedNote,
+          },
+        };
       }
       const option = decision.options.find((candidate) => candidate.id === optionId);
       if (option === undefined) {
@@ -285,7 +305,7 @@ export default async function plugin(bb: BbPluginApi) {
     "  bb deck chart --title <title> [--brief <text>] [--kind ship|scout]",
     "                [--project <project-id>] [--bot <name>] [--thread <thread-id>] [--json]",
     "  bb deck start <task-id> [--thread <thread-id>] [--json]",
-    "  bb deck ask <task-id> --question <text> --option <label> [--option <label> ...]",
+    "  bb deck ask <task-id> --question <text> --option \"<label> :: <detail>\" [--option ...]",
     "                [--recommend <number|label>] [--context <text>] [--thread <thread-id>] [--json]",
     "  bb deck note <task-id> --text <text> [--json]",
     "  bb deck merge <task-id> [--pr <url>] [--json]",
@@ -382,7 +402,7 @@ export default async function plugin(bb: BbPluginApi) {
     commands: [
       { name: "chart", summary: "Add a task to Charted Next", usage: "bb deck chart --title <title> [--brief <text>] [--kind ship|scout] [--project <id>] [--bot <name>] [--thread <id>]" },
       { name: "start", summary: "Move a task to Underway", usage: "bb deck start <task-id> [--thread <thread-id>]" },
-      { name: "ask", summary: "Open a Captain's Call on a task", usage: "bb deck ask <task-id> --question <text> --option <label> [--option <label> ...] [--recommend <number|label>] [--context <text>] [--thread <thread-id>]" },
+      { name: "ask", summary: "Open a Captain's Call on a task", usage: "bb deck ask <task-id> --question <text> --option \"<label> :: <detail>\" [--option ...] [--recommend <number|label>] [--context <text>] [--thread <thread-id>]" },
       { name: "note", summary: "Set the short status note on a task", usage: "bb deck note <task-id> --text <text>" },
       { name: "merge", summary: "Move a task to Awaiting Merge", usage: "bb deck merge <task-id> [--pr <url>]" },
       { name: "land", summary: "Move a task to Landed", usage: "bb deck land <task-id>" },
@@ -540,7 +560,7 @@ export default async function plugin(bb: BbPluginApi) {
                     `Decision: ${task.decision.question}`,
                     ...task.decision.options.map(
                       (option) =>
-                        `  ${task.decision?.recommendedId === option.id ? "*" : " "} ${option.id}: ${option.label}`,
+                        `  ${task.decision?.recommendedId === option.id ? "*" : " "} ${option.id}: ${option.label}${option.detail ? ` — ${option.detail}` : ""}`,
                     ),
                     task.decision.answerLabel
                       ? `Answered: ${task.decision.answerLabel}`

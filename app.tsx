@@ -178,7 +178,35 @@ function TaskCard({
           <p className="line-clamp-2 text-xs leading-snug text-foreground">
             {task.decision.question}
           </p>
-          <p className="mt-1 text-[10px] font-medium text-primary">
+          <div className="mt-1.5 flex flex-col gap-1">
+            {task.decision.options.slice(0, 4).map((option) => {
+              const recommended = option.id === task.decision?.recommendedId;
+              return (
+                <div key={option.id} className="flex items-start gap-1.5">
+                  <span
+                    className={cn(
+                      "mt-1 size-1.5 shrink-0 rounded-full",
+                      recommended ? "bg-primary" : "bg-muted-foreground/50",
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[11px] leading-snug">
+                    {option.label}
+                  </span>
+                  {recommended ? (
+                    <Chip className="border-primary/40 bg-background text-primary">
+                      REC
+                    </Chip>
+                  ) : null}
+                </div>
+              );
+            })}
+            {task.decision.options.length > 4 ? (
+              <p className="pl-3 text-[10px] text-muted-foreground">
+                +{task.decision.options.length - 4} more
+              </p>
+            ) : null}
+          </div>
+          <p className="mt-1.5 text-[10px] font-medium text-primary">
             Answer on the board
           </p>
         </div>
@@ -348,13 +376,15 @@ function DecisionDialog({
   if (task === null || decision === null) return null;
 
   const submit = async () => {
-    if (optionId === null || pending) return;
+    const freeform = note.trim();
+    const hasAnswer = optionId !== null || freeform !== "";
+    if (!hasAnswer || pending) return;
     setPending(true);
     try {
       await rpc.call("deck_answer", {
         taskId: task.id,
         optionId,
-        note: note.trim() === "" ? null : note.trim(),
+        note: freeform === "" ? null : freeform,
       });
       toast.success("Answer sent to the first mate");
       onAnswered();
@@ -389,9 +419,9 @@ function DecisionDialog({
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                onClick={() => setOptionId(option.id)}
+                onClick={() => setOptionId(selected ? null : option.id)}
                 className={cn(
-                  "flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                  "flex items-start gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
                   selected
                     ? "border-primary bg-primary/10"
                     : "border-border hover:border-foreground/25",
@@ -399,7 +429,7 @@ function DecisionDialog({
               >
                 <span
                   className={cn(
-                    "flex size-4 shrink-0 items-center justify-center rounded-full border",
+                    "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
                     selected ? "border-primary" : "border-muted-foreground/40",
                   )}
                 >
@@ -407,12 +437,26 @@ function DecisionDialog({
                     <span className="size-2 rounded-full bg-primary" />
                   ) : null}
                 </span>
-                <span className="min-w-0 flex-1">{option.label}</span>
-                {recommended ? (
-                  <Chip className="border-primary/40 bg-primary/10 text-primary">
-                    Recommended
-                  </Chip>
-                ) : null}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 font-medium leading-snug">
+                      {option.label}
+                    </span>
+                    {recommended ? (
+                      <Chip className="border-primary/40 bg-primary/10 text-primary">
+                        REC
+                      </Chip>
+                    ) : null}
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {option.id}
+                    </span>
+                  </span>
+                  {option.detail === null ? null : (
+                    <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                      {option.detail}
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -421,10 +465,10 @@ function DecisionDialog({
         <textarea
           value={note}
           onChange={(event) => setNote(event.target.value)}
-          placeholder="Add a note (optional)"
+          placeholder="Add a note, or answer in your own words…"
           rows={2}
           maxLength={2000}
-          aria-label="Note for the first mate"
+          aria-label="Note or freeform answer"
           className="w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
 
@@ -447,12 +491,21 @@ function DecisionDialog({
           </details>
         ) : null}
 
+        <p className="text-[10px] text-muted-foreground">
+          Your answer is recorded on the task and sent to the first mate, which
+          resumes the work. Choosing an option is optional if you answer in your
+          own words.
+        </p>
+
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={pending || optionId === null}>
-            {pending ? "Sending…" : "Send answer"}
+          <Button
+            onClick={submit}
+            disabled={pending || (optionId === null && note.trim() === "")}
+          >
+            {pending ? "Sending…" : "Queue answer"}
           </Button>
         </DialogFooter>
       </DialogContent>

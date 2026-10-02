@@ -19,7 +19,7 @@ no board.
 | --- | --- |
 | Work is agreed or charted, no worker started | `bb deck chart --title "<title>" [--brief "<one line>"] [--kind ship\|scout] [--project <id>] [--bot <name>]` |
 | A worker thread actually starts | `bb deck start <task-id> --thread <thread-id>` |
-| A real captain decision is needed | `bb deck ask <task-id> --question "<question>" --option "<label>" --option "<label>" [--recommend <number\|label>] [--context "<why now>"]` |
+| A real captain decision is needed | `bb deck ask <task-id> --question "<question>" --option "<label> :: <one-line detail>" --option "<label> :: <detail>" [--recommend <number\|label>] [--context "<why now>"]` |
 | A short status belongs on the card | `bb deck note <task-id> --text "<one line>"` |
 | PR is ready and needs review/merge | `bb deck merge <task-id> --pr <url>` |
 | Work landed | `bb deck land <task-id>` |
@@ -41,7 +41,9 @@ standup or a scheduled sweep should read.
    or direction changes, money, external/public actions, brand decisions, or
    two defensible paths. Routine progress stays out of the Captain's Call.
 4. Give every call a recommended option when one is defensible; the board
-   marks it.
+   marks it. Every option carries a one-line detail after ` :: ` so the
+   captain can decide without opening anything else; the captain can also
+   answer in their own words instead of picking an option.
 5. Move cards promptly: `merge` when the PR is up, `land` when it is merged,
    `fail` with a reason when it cannot proceed.
 6. Everything else — progress, retries, investigation — is reported to the

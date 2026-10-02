@@ -14,7 +14,7 @@ The board is a projection. The first mate owns the state through the
 ## Install
 
 ```sh
-bb plugin install git:https://github.com/deimantasnork/bb-plugin-captains-deck.git@semver:^0.2.0
+bb plugin install git:https://github.com/deimantasnork/bb-plugin-captains-deck.git@semver:^0.3.0
 ```
 
 Requires bb 0.44 or newer.
@@ -32,8 +32,10 @@ Requires bb 0.44 or newer.
 - **Crew tabs** filter the whole board by worker bot.
 - Cards show the task, its worker bot, live thread state (working, queued,
   needs input, failed), the provider, the PR link, and how long ago it moved.
-- A Captain's Call opens the options the first mate attached, marks the
-  recommended one, takes a note, and shows earlier calls on the task.
+- A Captain's Call shows its options on the card and opens a decision board:
+  every option carries a one-line detail, the recommended one is marked, and
+  you can pick an option, answer in your own words, or both. Earlier calls
+  stay on the task.
 - A deck-linked thread that hits a native bb prompt appears under **Waiting in
   threads** in the same column; open it to answer.
 
@@ -44,7 +46,8 @@ bb deck chart --title "Dark mode" --brief "Settings toggle + tokens" --bot Desig
 bb deck start a1b2c3d4 --thread thr_abc123
 bb deck note  a1b2c3d4 --text "First pass done, contrast check running"
 bb deck ask   a1b2c3d4 --question "Ship behind a flag?" \
-  --option "Behind a flag" --option "Straight to users" --recommend 1
+  --option "Behind a flag :: Additive and reversible" \
+  --option "Straight to users :: Simpler surface, bigger blast radius" --recommend 1
 bb deck merge a1b2c3d4 --pr https://github.com/acme/app/pull/42
 bb deck land  a1b2c3d4
 bb deck bearings
