@@ -52,6 +52,7 @@ const taskSchema = z.object({
   prUrl: z.string().nullable(),
   note: z.string().nullable(),
   decision: decisionSchema.nullable(),
+  history: z.array(decisionSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
   landedAt: z.string().nullable(),
@@ -75,6 +76,12 @@ export const rpcContract = defineRpcContract({
 
 const DECK_CHANGED = "deck-changed";
 const TASKS_KEY = "tasks";
+const HISTORY_LIMIT = 10;
+
+/** Tasks stored by older versions have no `history`; normalize on read. */
+function normalizeTask(task: DeckTask): DeckTask {
+  return { ...task, history: task.history ?? [] };
+}
 
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info("captains-deck loaded");
@@ -91,7 +98,8 @@ export default async function plugin(bb: BbPluginApi) {
   const { firstMateThreadId } = await settings.get();
 
   async function readTasks(): Promise<DeckTask[]> {
-    return (await bb.storage.kv.get<DeckTask[]>(TASKS_KEY)) ?? [];
+    const raw = (await bb.storage.kv.get<DeckTask[]>(TASKS_KEY)) ?? [];
+    return raw.map(normalizeTask);
   }
 
   async function writeTasks(tasks: DeckTask[]): Promise<void> {
@@ -130,6 +138,7 @@ export default async function plugin(bb: BbPluginApi) {
       prUrl: null,
       note: null,
       decision: null,
+      history: [],
       createdAt: timestamp,
       updatedAt: timestamp,
       landedAt: null,
@@ -175,26 +184,31 @@ export default async function plugin(bb: BbPluginApi) {
           : (options.find(
               (option) => option.label.toLowerCase() === recommend.toLowerCase(),
             )?.id ?? null);
-      if (recommendedId === null) {
-        recommendedId = null;
-      }
     }
-    return updateTask(id, (task) => ({
-      ...task,
-      state: "decision",
-      threadId: input.threadId ?? task.threadId,
-      decision: {
-        question: input.question,
-        options,
-        recommendedId,
-        context: input.context?.trim() ? input.context.trim() : null,
-        askedAt: now(),
-        answeredAt: null,
-        answerId: null,
-        answerLabel: null,
-        answerNote: null,
-      },
-    }));
+    return updateTask(id, (task) => {
+      // A new call archives the previous one, answered or not.
+      const history =
+        task.decision === null
+          ? task.history
+          : [task.decision, ...task.history].slice(0, HISTORY_LIMIT);
+      return {
+        ...task,
+        state: "decision",
+        threadId: input.threadId ?? task.threadId,
+        history,
+        decision: {
+          question: input.question,
+          options,
+          recommendedId,
+          context: input.context?.trim() ? input.context.trim() : null,
+          askedAt: now(),
+          answeredAt: null,
+          answerId: null,
+          answerLabel: null,
+          answerNote: null,
+        },
+      };
+    });
   }
 
   async function answerDecision(
@@ -218,7 +232,6 @@ export default async function plugin(bb: BbPluginApi) {
         // The answer resolves the call; the lane resumes. The first mate moves
         // the task on from here.
         state: "underway",
-        note: `Captain chose: ${option.label}${cleanedNote ? ` — ${cleanedNote}` : ""}`,
         decision: {
           ...decision,
           answeredAt: now(),
@@ -270,16 +283,18 @@ export default async function plugin(bb: BbPluginApi) {
   const usage = [
     "Usage:",
     "  bb deck chart --title <title> [--brief <text>] [--kind ship|scout]",
-    "                [--project <project-id>] [--bot <name>] [--json]",
+    "                [--project <project-id>] [--bot <name>] [--thread <thread-id>] [--json]",
     "  bb deck start <task-id> [--thread <thread-id>] [--json]",
     "  bb deck ask <task-id> --question <text> --option <label> [--option <label> ...]",
     "                [--recommend <number|label>] [--context <text>] [--thread <thread-id>] [--json]",
+    "  bb deck note <task-id> --text <text> [--json]",
     "  bb deck merge <task-id> [--pr <url>] [--json]",
     "  bb deck land <task-id> [--json]",
     "  bb deck fail <task-id> [--reason <text>] [--json]",
     "  bb deck move <task-id> <charted|underway|decision|merge|landed|failed> [--json]",
     "  bb deck list [--json]",
     "  bb deck show <task-id> [--json]",
+    "  bb deck bearings [--json]",
     "  bb deck remove <task-id> [--json]",
   ].join("\n");
 
@@ -325,19 +340,57 @@ export default async function plugin(bb: BbPluginApi) {
     return `${task.id}  ${task.title}  [${meta}]`;
   }
 
+  function bearingsSections(tasks: DeckTask[]): Array<{
+    title: string;
+    tasks: DeckTask[];
+  }> {
+    const byUpdate = (left: DeckTask, right: DeckTask) =>
+      left.updatedAt < right.updatedAt ? 1 : -1;
+    return [
+      {
+        title: "Charted Next",
+        tasks: tasks.filter((task) => task.state === "charted").sort(byUpdate),
+      },
+      {
+        title: "Underway",
+        tasks: tasks
+          .filter((task) => task.state === "underway" || task.state === "failed")
+          .sort(byUpdate),
+      },
+      {
+        title: "Captain's Call",
+        tasks: tasks
+          .filter(
+            (task) => task.state === "decision" && task.decision?.answeredAt == null,
+          )
+          .sort(byUpdate),
+      },
+      {
+        title: "Awaiting Merge",
+        tasks: tasks.filter((task) => task.state === "merge").sort(byUpdate),
+      },
+      {
+        title: "Recently Landed",
+        tasks: tasks.filter((task) => task.state === "landed").sort(byUpdate).slice(0, 6),
+      },
+    ];
+  }
+
   bb.cli.register({
     name: "deck",
-    summary: "Drive the Captain's Deck board: chart, start, ask, merge, and land tasks",
+    summary: "Drive the Captain's Deck board: chart, start, ask, note, merge, and land tasks",
     commands: [
-      { name: "chart", summary: "Add a task to Charted Next", usage: "bb deck chart --title <title> [--brief <text>] [--kind ship|scout] [--project <id>] [--bot <name>]" },
+      { name: "chart", summary: "Add a task to Charted Next", usage: "bb deck chart --title <title> [--brief <text>] [--kind ship|scout] [--project <id>] [--bot <name>] [--thread <id>]" },
       { name: "start", summary: "Move a task to Underway", usage: "bb deck start <task-id> [--thread <thread-id>]" },
       { name: "ask", summary: "Open a Captain's Call on a task", usage: "bb deck ask <task-id> --question <text> --option <label> [--option <label> ...] [--recommend <number|label>] [--context <text>] [--thread <thread-id>]" },
+      { name: "note", summary: "Set the short status note on a task", usage: "bb deck note <task-id> --text <text>" },
       { name: "merge", summary: "Move a task to Awaiting Merge", usage: "bb deck merge <task-id> [--pr <url>]" },
       { name: "land", summary: "Move a task to Landed", usage: "bb deck land <task-id>" },
       { name: "fail", summary: "Mark a task failed", usage: "bb deck fail <task-id> [--reason <text>]" },
       { name: "move", summary: "Set a task's column", usage: "bb deck move <task-id> <charted|underway|decision|merge|landed|failed>" },
       { name: "list", summary: "List deck tasks", usage: "bb deck list [--json]" },
       { name: "show", summary: "Show one deck task", usage: "bb deck show <task-id> [--json]" },
+      { name: "bearings", summary: "Print the fleet digest", usage: "bb deck bearings [--json]" },
       { name: "remove", summary: "Remove a deck task", usage: "bb deck remove <task-id> [--json]" },
     ],
     async run(argv) {
@@ -405,6 +458,17 @@ export default async function plugin(bb: BbPluginApi) {
               task,
               `Captain's Call opened on ${task.id}: ${question}\nOptions: ${options.join(" | ")}`,
             );
+          }
+
+          case "note": {
+            const id = args[0];
+            const text = flag(flags, "text") ?? args.slice(1).join(" ").trim();
+            if (id === undefined || text === "") return fail(usage);
+            const task = await updateTask(id, (current) => ({
+              ...current,
+              note: text,
+            }));
+            return reply(task, `Noted ${formatTask(task)}`);
           }
 
           case "merge": {
@@ -483,10 +547,49 @@ export default async function plugin(bb: BbPluginApi) {
                       : "Open",
                   ].join("\n")
                 : null,
+              task.history.length > 0
+                ? `Previous calls: ${task.history.length}`
+                : null,
             ]
               .filter((line): line is string => line !== null)
               .join("\n");
             return reply(task, detail);
+          }
+
+          case "bearings": {
+            const tasks = await readTasks();
+            const sections = bearingsSections(tasks);
+            if (json) {
+              return reply(
+                {
+                  sections: sections.map((section) => ({
+                    title: section.title,
+                    tasks: section.tasks,
+                  })),
+                },
+                "",
+              );
+            }
+            const lines: string[] = ["Bearings", ""];
+            for (const section of sections) {
+              lines.push(
+                `${section.title} (${section.tasks.length})`,
+                ...(section.tasks.length === 0
+                  ? ["  nothing"]
+                  : section.tasks.map((task) => {
+                      const extra = [
+                        task.bot ?? undefined,
+                        task.threadId ? `thread ${task.threadId}` : undefined,
+                        task.prUrl ?? undefined,
+                      ]
+                        .filter((value): value is string => value !== undefined)
+                        .join(" · ");
+                      return `  ${task.id}  ${task.title}${extra ? `  [${extra}]` : ""}`;
+                    })),
+                "",
+              );
+            }
+            return { exitCode: 0, stdout: lines.join("\n").trimEnd() };
           }
 
           case "remove": {

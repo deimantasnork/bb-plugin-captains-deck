@@ -50,6 +50,8 @@ const COLUMNS: Array<{
 ];
 
 const LANDED_VISIBLE = 8;
+const CREW_KEY = "captains-deck:crew";
+const UNASSIGNED = "Unassigned";
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -126,6 +128,7 @@ function TaskCard({
   const badge = liveBadge(thread);
   const isDecision = task.state === "decision";
   const interactive = isDecision || task.threadId !== null;
+  const answered = task.decision?.answerLabel ?? null;
   return (
     <div
       role={interactive ? "button" : undefined}
@@ -181,15 +184,21 @@ function TaskCard({
         </div>
       ) : null}
 
-      {!isDecision && task.decision?.answerLabel ? (
+      {!isDecision && answered !== null ? (
         <p className="mt-1.5 line-clamp-1 text-[10px] text-muted-foreground">
-          Captain chose: {task.decision.answerLabel}
+          Captain chose: {answered}
         </p>
       ) : null}
 
-      {task.note !== null && !isDecision ? (
+      {task.note !== null ? (
         <p className="mt-1.5 line-clamp-2 text-[10px] text-muted-foreground">
           {task.note}
+        </p>
+      ) : null}
+
+      {isDecision && task.history.length > 0 ? (
+        <p className="mt-1.5 text-[10px] text-muted-foreground">
+          {task.history.length} earlier {task.history.length === 1 ? "call" : "calls"}
         </p>
       ) : null}
 
@@ -228,6 +237,52 @@ function TaskCard({
           {timeAgo(task.updatedAt)}
         </span>
       </div>
+    </div>
+  );
+}
+
+/** A deck-linked thread blocked on the captain inside the thread itself. */
+function ThreadCallCard({
+  task,
+  thread,
+  onOpen,
+}: {
+  task: DeckTask;
+  thread: PluginSidebarThread;
+  onOpen: () => void;
+}) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
+      className="cursor-pointer rounded-lg border border-dashed border-primary/40 bg-card p-2.5 text-left transition-colors hover:border-primary/70"
+    >
+      <div className="flex items-center gap-1.5">
+        <Chip className="border-primary/40 bg-primary/10 text-primary">
+          THREAD
+        </Chip>
+        {task.bot === null ? null : (
+          <Chip className="border-border bg-background text-muted-foreground">
+            {task.bot}
+          </Chip>
+        )}
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          {thread.providerId}
+        </span>
+      </div>
+      <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-snug">
+        {task.title}
+      </p>
+      <p className="mt-1 text-[10px] text-primary">
+        {thread.indicatorLabel ?? "Waiting for you in the thread"} — open to answer
+      </p>
     </div>
   );
 }
@@ -373,6 +428,25 @@ function DecisionDialog({
           className="w-full resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         />
 
+        {task.history.length > 0 ? (
+          <details className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+              Earlier calls ({task.history.length})
+            </summary>
+            <ul className="mt-1.5 flex flex-col gap-1.5">
+              {task.history.map((previous, index) => (
+                <li key={`${previous.askedAt}-${index}`} className="text-xs leading-snug">
+                  <span className="text-muted-foreground">{previous.question}</span>
+                  <span className="block text-foreground">
+                    {previous.answerLabel ?? "Open when replaced"}
+                    {previous.answerNote === null ? "" : ` — ${previous.answerNote}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
             Cancel
@@ -394,6 +468,18 @@ function BoardPage() {
   const [error, setError] = useState<string | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [showAllLanded, setShowAllLanded] = useState(false);
+  const [crew, setCrew] = useState<string>(() => {
+    if (typeof localStorage === "undefined") return "all";
+    return localStorage.getItem(CREW_KEY) ?? "all";
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CREW_KEY, crew);
+    } catch {
+      // Preference only; ignore storage failures.
+    }
+  }, [crew]);
 
   const refetch = () => {
     rpc.call("deck_board").then(
@@ -421,6 +507,23 @@ function BoardPage() {
     return map;
   }, [threadsState.threads]);
 
+  const crews = useMemo(() => {
+    const names = new Set<string>();
+    for (const task of tasks ?? []) names.add(task.bot ?? UNASSIGNED);
+    return Array.from(names).sort((left, right) => left.localeCompare(right));
+  }, [tasks]);
+
+  useEffect(() => {
+    if (crew !== "all" && !crews.includes(crew)) setCrew("all");
+  }, [crews, crew]);
+
+  const visibleTasks = useMemo(() => {
+    const all = tasks ?? [];
+    return crew === "all"
+      ? all
+      : all.filter((task) => (task.bot ?? UNASSIGNED) === crew);
+  }, [tasks, crew]);
+
   const columns = useMemo(() => {
     const grouped: Record<ColumnKey, DeckTask[]> = {
       charted: [],
@@ -429,20 +532,36 @@ function BoardPage() {
       merge: [],
       landed: [],
     };
-    for (const task of tasks ?? []) grouped[columnFor(task)].push(task);
+    for (const task of visibleTasks) grouped[columnFor(task)].push(task);
     for (const key of Object.keys(grouped) as ColumnKey[]) {
       grouped[key].sort((left, right) =>
         left.updatedAt < right.updatedAt ? 1 : -1,
       );
     }
     return grouped;
-  }, [tasks]);
+  }, [visibleTasks]);
+
+  // Threads blocked on the captain inside the thread itself, for tasks the
+  // first mate linked. Deck-owned decisions stay the primary call.
+  const threadCalls = useMemo(() => {
+    const seen = new Set<string>();
+    const calls: Array<{ task: DeckTask; thread: PluginSidebarThread }> = [];
+    for (const task of visibleTasks) {
+      if (task.threadId === null || task.state === "decision") continue;
+      if (seen.has(task.threadId)) continue;
+      const thread = threadsById.get(task.threadId);
+      if (thread === undefined || !thread.hasPendingInteraction) continue;
+      seen.add(task.threadId);
+      calls.push({ task, thread });
+    }
+    return calls;
+  }, [visibleTasks, threadsById]);
 
   const activeTask =
     activeTaskId === null
       ? null
       : (tasks?.find((task) => task.id === activeTaskId) ?? null);
-  const openCalls = columns.decision.length;
+  const openCalls = columns.decision.length + threadCalls.length;
   const landedShown = showAllLanded
     ? columns.landed
     : columns.landed.slice(0, LANDED_VISIBLE);
@@ -486,6 +605,35 @@ function BoardPage() {
         </span>
       </header>
 
+      <div className="flex items-center gap-1.5 overflow-x-auto border-b border-border px-4 py-1.5">
+        {["all", ...crews].map((name) => {
+          const count =
+            name === "all"
+              ? (tasks ?? []).filter((task) => task.state !== "landed").length
+              : (tasks ?? []).filter(
+                  (task) =>
+                    (task.bot ?? UNASSIGNED) === name && task.state !== "landed",
+                ).length;
+          const selected = crew === name;
+          return (
+            <button
+              key={name}
+              type="button"
+              onClick={() => setCrew(name)}
+              className={cn(
+                "shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] transition-colors",
+                selected
+                  ? "border-foreground/30 bg-foreground/10 font-medium text-foreground"
+                  : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {name === "all" ? "All crew" : name}
+              <span className="ml-1 font-mono text-[10px] opacity-70">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+
       {error === null ? null : (
         <p role="alert" className="px-4 pt-2 text-xs text-destructive">
           {error}
@@ -503,11 +651,11 @@ function BoardPage() {
               title={column.title}
               hint={column.hint}
               accent={column.accent}
-              count={columns[column.key].length}
+              count={columns[column.key].length + (column.key === "decision" ? threadCalls.length : 0)}
             >
               {tasks === null ? (
                 <p className="px-1 py-2 text-xs text-muted-foreground">Loading…</p>
-              ) : items.length === 0 ? (
+              ) : items.length === 0 && (column.key !== "decision" || threadCalls.length === 0) ? (
                 <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
                   Nothing here
                 </p>
@@ -525,6 +673,21 @@ function BoardPage() {
                   />
                 ))
               )}
+              {column.key === "decision" && threadCalls.length > 0 ? (
+                <p className="px-1 pt-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Waiting in threads
+                </p>
+              ) : null}
+              {column.key === "decision"
+                ? threadCalls.map((call) => (
+                    <ThreadCallCard
+                      key={call.thread.id}
+                      task={call.task}
+                      thread={call.thread}
+                      onOpen={() => threadActions.open(call.thread.id)}
+                    />
+                  ))
+                : null}
               {hidden > 0 ? (
                 <button
                   type="button"

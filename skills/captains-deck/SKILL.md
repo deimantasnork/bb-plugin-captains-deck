@@ -20,13 +20,17 @@ no board.
 | Work is agreed or charted, no worker started | `bb deck chart --title "<title>" [--brief "<one line>"] [--kind ship\|scout] [--project <id>] [--bot <name>]` |
 | A worker thread actually starts | `bb deck start <task-id> --thread <thread-id>` |
 | A real captain decision is needed | `bb deck ask <task-id> --question "<question>" --option "<label>" --option "<label>" [--recommend <number\|label>] [--context "<why now>"]` |
+| A short status belongs on the card | `bb deck note <task-id> --text "<one line>"` |
 | PR is ready and needs review/merge | `bb deck merge <task-id> --pr <url>` |
 | Work landed | `bb deck land <task-id>` |
 | Work failed | `bb deck fail <task-id> --reason "<what failed>"` |
 | Task no longer relevant | `bb deck remove <task-id>` |
 
 `bb deck list` shows every card with its id; add `--json` when the output
-drives code. `bb deck show <task-id>` prints the brief, note, and open decision.
+drives code. `bb deck show <task-id>` prints the brief, note, open decision,
+and earlier calls. `bb deck bearings` prints the fleet digest — Charted Next,
+Underway, Captain's Call, Awaiting Merge, and Recently Landed — and is what a
+standup or a scheduled sweep should read.
 
 ## Rules
 
