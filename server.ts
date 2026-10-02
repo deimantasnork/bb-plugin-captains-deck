@@ -79,9 +79,25 @@ const DECK_CHANGED = "deck-changed";
 const TASKS_KEY = "tasks";
 const HISTORY_LIMIT = 10;
 
+/** Decisions stored by older versions always have option details defaulted. */
+function normalizeDecision(decision: DeckDecision | null): DeckDecision | null {
+  if (decision === null) return null;
+  return {
+    ...decision,
+    options: decision.options.map((option) => ({
+      ...option,
+      detail: option.detail ?? null,
+    })),
+  };
+}
+
 /** Tasks stored by older versions have no `history`; normalize on read. */
 function normalizeTask(task: DeckTask): DeckTask {
-  return { ...task, history: task.history ?? [] };
+  return {
+    ...task,
+    history: (task.history ?? []).map((decision) => normalizeDecision(decision)!),
+    decision: normalizeDecision(task.decision),
+  };
 }
 
 export default async function plugin(bb: BbPluginApi) {
