@@ -205,6 +205,7 @@ type DialogContentProps = React.ComponentPropsWithoutRef<
 > & {
   onAfterCloseAutoFocus?: () => void;
   hideCloseButton?: boolean;
+  fullScreenOnCompact?: boolean;
 };
 
 const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
@@ -215,6 +216,7 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
       hideCloseButton = false,
       onAfterCloseAutoFocus,
       onCloseAutoFocus,
+      fullScreenOnCompact = false,
       ...props
     },
     ref,
@@ -233,11 +235,13 @@ const DialogContent = React.forwardRef<HTMLDivElement, DialogContentProps>(
           onAfterCloseAutoFocus={onAfterCloseAutoFocus}
           labelledBy={titleId}
           describedBy={descriptionId}
+          contentClassName={fullScreenOnCompact ? "mt-0 h-[calc(100dvh-var(--bb-drawer-keyboard-inset,0px))] max-h-[calc(100dvh-var(--bb-drawer-keyboard-inset,0px))] rounded-none pt-[env(safe-area-inset-top)] [&_[data-persistent-drawer-handle]]:hidden" : undefined}
         >
           <div
             ref={ref}
             className={cn(
-              "grid grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]",
+              "grid min-h-0 grid-cols-[minmax(0,1fr)] gap-4 overflow-y-auto px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))]",
+              fullScreenOnCompact && "flex-1",
               className,
               "max-w-none",
             )}
